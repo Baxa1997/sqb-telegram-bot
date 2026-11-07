@@ -1,0 +1,26 @@
+{
+   "name": "venture-telegram-bot",
+   "private": true,
+   "version": "0.1.0",
+   "type": "module",
+   "packageManager": "yarn@1.22.22",
+   "scripts": {
+      "dev": "node --experimental-strip-types --env-file-if-exists=.env.local src/index.ts",
+      "start": "node --experimental-strip-types --env-file-if-exists=.env src/index.ts",
+      "login": "node --experimental-strip-types --env-file-if-exists=.env.local src/login.ts",
+      "type-check": "tsc --noEmit"
+   },
+   "dependencies": {
+      "qrcode": "1.5.4",
+      "telegram": "2.26.22"
+   },
+   "devDependencies": {
+      "@types/node": "^26.1.2",
+      "@types/qrcode": "1.5.6",
+      "typescript": "7.0.2"
+   },
+   "engines": {
+      "node": "22.x",
+      "yarn": ">=1.22.0"
+   }
+}

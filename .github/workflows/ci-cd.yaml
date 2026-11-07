@@ -1,0 +1,25 @@
+name: CI/CD
+
+# The Telegram bot server: image ghcr.io/ucode-io/sqb-telegram-bot:<run number> → the tag is
+# written to Ucode-io/deployments (clusters/cluster-prod/ucode-prod/sqb-telegram-bot) → ArgoCD
+# runs it, one replica and no ingress (it needs no address). Its settings come from Vault
+# (secret/k8s/ucode-prod/sqb-telegram-bot): see README «Deploy».
+#
+# Started by hand for now: turn on `push: branches: [main]`, as the other apps have, once
+# Ucode-io/deployments has that folder's values.yaml and Vault has the settings, and stop the
+# copy running on a developer's computer then (one copy per bot).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  ci-cd-prod:
+    if: github.ref_name == 'main'
+    uses: Ucode-io/ci-cd/.github/workflows/ci_cd.yml@main
+    with:
+      ENVIRONMENT: production
+      ENV_TAG: latest
+    secrets: inherit
