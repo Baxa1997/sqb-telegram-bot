@@ -49,5 +49,22 @@ export const TIMING = {
    betweenGroupsMs: 15000, // the fund's account makes one group at a time
 };
 
+/* The news collector (src/news, batch 28). Without ANTHROPIC_API_KEY it picks
+   articles by the sources' keywords and the fund's names; with it, Claude reads
+   each candidate, keeps those on the fund's focus and writes the title and
+   summary in Russian, Uzbek and English. ANTHROPIC_MODEL picks the model:
+   claude-opus-5-5 by default, claude-haiku-5-5 costs far less per article. */
+export const NEWS = {
+   anthropicKey: env('ANTHROPIC_API_KEY'),
+   model: env('ANTHROPIC_MODEL', 'claude-opus-5-5'),
+   tickMs: 60000, // which sources are due, and the collector's heartbeat
+   everyMin: 30, // a source's checks, unless fund_settings.news_every says
+   maxAgeDays: 7, // older market news are not taken
+   pressAgeDays: 365, // an article naming the fund is taken up to a year back
+   perSource: 30, // the newest articles of a source looked at in one check
+   aiPerRound: 40, // Claude reads at most this many articles per round
+   seenKept: 500, // the guids a source remembers, so a deleted one stays away
+};
+
 export const MAX_DOWNLOAD = 20 * 1024 * 1024; // what the Bot API lets a bot fetch
 export const MAX_UPLOAD = 50 * 1024 * 1024; // what it lets a bot send

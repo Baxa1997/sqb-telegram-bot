@@ -25,6 +25,26 @@ Telegram ── getUpdates (long polling) ──►  this server  ── project
 - **The bot's state** goes to `fund_settings` every minute: `telegram_bot`, `telegram_mode` (`account` or `link`) and `telegram_seen_at`. The panel counts Telegram as connected while that is under three minutes old.
 - **Renames.** A deal renamed in the panel renames its group. If the bot is removed from a group, its state becomes `lost`, and the panel offers «Подключить заново».
 
+## The website's news
+
+The same server collects news for sqbvc.uz (`src/news`; the plan is the dashboard's `docs/news.md`, the tables batch 28). The fund lists sources in the panel's Настройки → Сбор новостей:
+- an RSS feed;
+- a site, whose feed is found;
+- a public Telegram channel, read from `t.me/s/<name>`;
+- a Google News search.
+
+Every minute the server checks the sources that are due and leaves each new article that fits as a draft in Сайт → Новости:
+- an article that names the fund goes to «Пресса о нас», up to a year back;
+- an article of the week with a source's keyword goes to «Рынок».
+
+It writes the title, a short lead, the outlet's picture as the cover, the link to the original, and the article's own text and pictures as the news item's text (the fund has the outlets' permission). A Google News link gives the title and link only. With `ANTHROPIC_API_KEY`, Claude (`claude-opus-5-5`, or `ANTHROPIC_MODEL`) also checks each candidate against the fund's focus and writes the title and summary in Russian, Uzbek and English. The news part runs even without `TELEGRAM_BOT_TOKEN`.
+
+```bash
+yarn news:try rss https://www.spot.uz/ru/rss/ "стартап, венчур"   # what a source would give, nothing written
+yarn news:try telegram @spotuz
+yarn news:try google '"SQB Ventures"'
+```
+
 ## Commands
 
 ```bash
