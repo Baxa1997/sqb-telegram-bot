@@ -53,10 +53,11 @@ export const TIMING = {
    articles by the sources' keywords and the fund's names; with it, Claude reads
    each candidate, keeps those on the fund's focus and writes the title and
    summary in Russian, Uzbek and English. ANTHROPIC_MODEL picks the model:
-   claude-opus-5-5 by default, claude-haiku-5-5 costs far less per article. */
+   claude-haiku-5-5 (the latest Haiku) by default, cheap and quick for this;
+   claude-opus-5-5 writes better and costs far more per article. */
 export const NEWS = {
    anthropicKey: env('ANTHROPIC_API_KEY'),
-   model: env('ANTHROPIC_MODEL', 'claude-opus-5-5'),
+   model: env('ANTHROPIC_MODEL', 'claude-haiku-5-5'),
    tickMs: 60000, // which sources are due, and the collector's heartbeat
    everyMin: 30, // a source's checks, unless fund_settings.news_every says
    maxAgeDays: 7, // older market news are not taken
