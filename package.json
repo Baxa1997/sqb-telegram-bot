@@ -8,9 +8,12 @@
       "dev": "node --experimental-strip-types --env-file-if-exists=.env.local src/index.ts",
       "start": "node --experimental-strip-types --env-file-if-exists=.env src/index.ts",
       "login": "node --experimental-strip-types --env-file-if-exists=.env.local src/login.ts",
-      "type-check": "tsc --noEmit"
+      "type-check": "tsc --noEmit",
+      "news:try": "node --experimental-strip-types src/news/try.ts"
    },
    "dependencies": {
+      "@anthropic-ai/sdk": "1.2.0",
+      "fast-xml-parser": "5.11.2",
       "qrcode": "1.5.4",
       "telegram": "2.26.22"
    },

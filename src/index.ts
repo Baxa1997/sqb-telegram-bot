@@ -1,6 +1,6 @@
 import { accountWired, loadAccount, processAuth } from './account.ts';
 import * as bot from './bot.ts';
-import { APP_READY, TELEGRAM, TIMING, UCODE } from './config.ts';
+import { APP_READY, NEWS, TELEGRAM, TIMING, UCODE } from './config.ts';
 import {
    bindByToken,
    chatByTelegramId,
@@ -15,12 +15,15 @@ import {
    syncTitles,
 } from './groups.ts';
 import { receive, sendPending } from './messages.ts';
+import { aiModel } from './news/ai.ts';
+import { collectNews } from './news/index.ts';
 import { ensureKeys } from './secrets.ts';
 import { listRows, str, UcodeError, updateRow } from './ucode.ts';
 
 /* The fund's Telegram bot server (dashboard repo, docs/telegram.md): every
    new deal gets its group, every message of a group comes into the deal's
    journal, and what the team writes in «Чат и письма» goes to the group.
+   It also collects the news for the website (src/news, docs/news.md).
    It reads Telegram by long polling and the panel's requests from ucode, so it
    needs no public address. Run exactly one copy per bot: Telegram gives a
    bot's updates to one reader only. */
@@ -123,9 +126,18 @@ const every = async (ms: number, task: () => Promise<void>, name: string) => {
 };
 
 const main = async () => {
-   if (!TELEGRAM.botToken || !UCODE.apiKey) {
-      console.error('Set TELEGRAM_BOT_TOKEN and UCODE_API_KEY (.env.example).');
+   if (!UCODE.apiKey) {
+      console.error('Set UCODE_API_KEY (.env.example).');
       process.exit(1);
+   }
+   // the news for the website, with or without Telegram (src/news)
+   console.log(
+      `[news] ${aiModel() ? `Claude (${aiModel()}) picks and summarises the articles` : 'no ANTHROPIC_API_KEY: articles are picked by keywords and the fund’s names'}`,
+   );
+   void every(NEWS.tickMs, collectNews, 'news');
+   if (!TELEGRAM.botToken) {
+      console.error('[bot] no TELEGRAM_BOT_TOKEN: the deals’ Telegram groups are off');
+      return;
    }
    const me = await bot.getMe();
    state.botUsername = me.username ?? '';
