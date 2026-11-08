@@ -9,13 +9,18 @@ import type { Localized } from './pick.ts';
    the cheap checks (a source's keywords, the fund's names), and at most
    NEWS.aiPerRound per round, which bounds the cost.
 
-   A request that Claude's safety classifiers decline is retried server-side
-   on the model Anthropic recommends (`fallbacks: "default"`); a decline that
-   stays one counts as not relevant. */
+   A request that Claude's safety classifiers decline counts as not relevant.
+   On Opus or Sonnet it is first retried server-side on the model Anthropic
+   recommends (`fallbacks: "default"`); Haiku (the default) has no such
+   fallback and takes no `fallbacks` option. */
 
 const client = NEWS.anthropicKey
    ? new Anthropic({ apiKey: NEWS.anthropicKey, timeout: 120_000 })
    : null;
+
+const FALLBACK = NEWS.model.startsWith('claude-haiku')
+   ? {}
+   : { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' as const };
 
 export const aiModel = () => (client ? NEWS.model : '');
 
@@ -78,8 +83,7 @@ export const askClaude = async (
    const response = await client.beta.messages.create({
       model: NEWS.model,
       max_tokens: 8000,
-      betas: ['server-side-fallback-2026-07-01'],
-      fallbacks: 'default',
+      ...FALLBACK,
       output_config: {
          effort: 'low',
          format: { type: 'json_schema', schema: SCHEMA },

@@ -37,7 +37,7 @@ Every minute the server checks the sources that are due and leaves each new arti
 - an article that names the fund goes to «Пресса о нас», up to a year back;
 - an article of the week with a source's keyword goes to «Рынок».
 
-It writes the title, a short lead, the outlet's picture as the cover, the link to the original, and the article's own text and pictures as the news item's text (the fund has the outlets' permission). A Google News link gives the title and link only. With `ANTHROPIC_API_KEY`, Claude (`claude-opus-5-5`, or `ANTHROPIC_MODEL`) also checks each candidate against the fund's focus and writes the title and summary in Russian, Uzbek and English. The news part runs even without `TELEGRAM_BOT_TOKEN`.
+It writes the title, a short lead, the outlet's picture as the cover, the link to the original, and the article's own text and pictures as the news item's text (the fund has the outlets' permission). A Google News link gives the title and link only. With `ANTHROPIC_API_KEY`, Claude (`claude-haiku-5-5`, or `ANTHROPIC_MODEL`) also checks each candidate against the fund's focus and writes the title and summary in Russian, Uzbek and English. The news part runs even without `TELEGRAM_BOT_TOKEN`.
 
 ```bash
 yarn news:try rss https://www.spot.uz/ru/rss/ "стартап, венчур"   # what a source would give, nothing written
