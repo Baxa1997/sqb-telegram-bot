@@ -4,6 +4,7 @@ import { APP_READY, NEWS, TELEGRAM, TIMING, UCODE } from './config.ts';
 import {
    bindByToken,
    chatByTelegramId,
+   checkGroups,
    loadChats,
    loadDeals,
    markLost,
@@ -152,6 +153,7 @@ const main = async () => {
    await heartbeat();
    await loadDeals();
    await loadChats();
+   await checkGroups();
 
    void every(TIMING.heartbeatMs, heartbeat, 'heartbeat');
    void every(
