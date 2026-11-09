@@ -53,8 +53,11 @@ const inline = (html: string, base: string) =>
       .replace(/<br\s*\/?>/gi, ' ')
       .replace(/<(\/?)(?:b|strong)\b[^>]*>/gi, '<$1strong>')
       .replace(/<(\/?)(?:i|em)\b[^>]*>/gi, '<$1em>')
-      .replace(/<a\b[^>]*href=["']([^"']+)["'][^>]*>/gi, (_, href: string) => {
-         const url = absolute(href, base);
+      // every link rebuilt with its web address only: no other attribute
+      // (onclick, style…) of the outlet's page reaches the site
+      .replace(/<a\b([^>]*)>/gi, (_, attrs: string) => {
+         const href = attrs.match(/\bhref=["']([^"']+)["']/i)?.[1];
+         const url = href ? absolute(href, base) : '';
          return /^https?:\/\//.test(url) ? `<a href="${escapeAttr(url)}">` : '<a>';
       })
       .replace(/<(?!\/?(?:strong|em|a)\b)[^>]+>/gi, '')
