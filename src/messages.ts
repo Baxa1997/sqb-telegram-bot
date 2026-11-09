@@ -1,6 +1,6 @@
 import * as bot from './bot.ts';
 import { MAX_UPLOAD } from './config.ts';
-import { chatByTelegramId, state } from './groups.ts';
+import { chatByTelegramId, markLost, state } from './groups.ts';
 import {
    createRow,
    getRow,
@@ -189,6 +189,7 @@ export const sendPending = async () => {
          }
          log(`not sent to ${str(group.title)}: ${(error as Error).message}`);
          await updateRow('deal_events', { guid: line.guid, tg_state: 'failed' });
+         if (bot.notInChat(error)) await markLost(chatId);
       }
    }
 };

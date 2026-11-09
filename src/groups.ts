@@ -238,12 +238,28 @@ export const bindByToken = async (chatId: string, token: string) => {
    await loadChats();
 };
 
-// The bot was removed from a group, or the group became a supergroup.
-export const markLost = async (chatId: string) => {
+// The bot was removed from a group, or is not in it at all: the panel then
+// offers «Подключить заново».
+export const markLost = async (chatId: string, error = '') => {
    const row = chatByTelegramId(chatId);
    if (!row || str(row.status) !== 'active') return;
-   await updateRow('tg_chats', { guid: row.guid, status: 'lost' });
+   await updateRow('tg_chats', { guid: row.guid, status: 'lost', ...(error && { error }) });
+   row.status = 'lost';
    log(`${str(row.title)}: the bot is no longer in the group`);
+};
+
+/* On start, each active group is asked whether this bot is in it. After a
+   change of bot (a new TELEGRAM_BOT_TOKEN) the groups the old bot opened would
+   otherwise look active while nothing reaches them. Other failures (Telegram
+   unreachable) leave the group as it is. */
+export const checkGroups = async () => {
+   for (const row of state.chats.filter((item) => str(item.status) === 'active'))
+      try {
+         await bot.getChat(str(row.chat_id));
+      } catch (error) {
+         if (bot.notInChat(error))
+            await markLost(str(row.chat_id), 'Бота нет в этой группе: возможно, сменили бота');
+      }
 };
 
 export const migrate = async (fromId: string, toId: string) => {
@@ -263,6 +279,7 @@ export const syncTitles = async () => {
          await bot.setChatTitle(str(row.chat_id), titleOf(deal));
       } catch (error) {
          log(`${deal.company}: not renamed: ${(error as Error).message}`);
+         if (bot.notInChat(error)) await markLost(str(row.chat_id));
       }
       await updateRow('tg_chats', { guid: row.guid, title: titleOf(deal) });
    }

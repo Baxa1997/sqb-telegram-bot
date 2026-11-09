@@ -168,6 +168,15 @@ export const exportInviteLink = (chatId: string) =>
 export const leaveChat = (chatId: string) =>
    call<boolean>('leaveChat', { chat_id: chatId });
 
+export const getChat = (chatId: string) => call<{ id: number }>('getChat', { chat_id: chatId });
+
+/* Telegram's answer that this bot is not in the group: it was removed, or the
+   group was opened with another bot (a new TELEGRAM_BOT_TOKEN). A group that
+   became a supergroup is not this: it comes as its own 400. */
+export const notInChat = (error: unknown) =>
+   error instanceof TelegramError &&
+   (error.code === 403 || (error.code === 400 && /chat not found/i.test(error.message)));
+
 // A file of a message, if the Bot API lets the bot fetch it (20 MB).
 export const downloadFile = async (fileId: string) => {
    const file = await call<{ file_path?: string; file_size?: number }>(
