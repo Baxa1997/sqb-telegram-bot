@@ -136,6 +136,9 @@ const employeeName = async (id: string) => {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+// how long a reply that Telegram could not take is tried again
+const RETRY_MS = 30 * 60000;
+
 // The panel's messages waiting to go to their deal's group.
 export const sendPending = async () => {
    const pending = await listRows('deal_events', { tg_state: 'pending' });
@@ -155,8 +158,8 @@ export const sendPending = async () => {
       const files = (await listRows('attachments', { item_id: line.guid })).filter(
          (row) => str(row.section) === 'chat',
       );
+      let firstId = 0;
       try {
-         let firstId = 0;
          if (text) {
             const sent = await bot.sendMessage(chatId, `${header}\n${bot.escapeHtml(text)}`);
             firstId = sent.message_id;
@@ -186,6 +189,15 @@ export const sendPending = async () => {
             log(`Telegram asks to wait ${error.retryAfter} s`);
             await sleep(error.retryAfter * 1000);
             return; // the rest stay pending
+         }
+         /* Telegram or the network failed for a moment and nothing went out:
+            the line stays pending and goes on the next round, for up to
+            RETRY_MS; a part already sent is not sent twice. */
+         const passing =
+            !(error instanceof bot.TelegramError) || error.code === 0 || error.code >= 500;
+         if (passing && !firstId && Date.now() - Date.parse(str(line.at)) < RETRY_MS) {
+            log(`not sent to ${str(group.title)} yet, tried again shortly: ${(error as Error).message}`);
+            return;
          }
          log(`not sent to ${str(group.title)}: ${(error as Error).message}`);
          await updateRow('deal_events', { guid: line.guid, tg_state: 'failed' });
