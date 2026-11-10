@@ -171,6 +171,8 @@ export const processRequested = async () => {
          title: titleOf(deal),
          error: '',
       });
+      // known at once: a message written in the first seconds is not lost
+      Object.assign(asked, { chat_id: chatId, status: 'active' });
       log(`${deal.company}: group created by the fund's account`);
       await setUp(asked, deal, chatId, false);
       await sleep(TIMING.betweenGroupsMs);

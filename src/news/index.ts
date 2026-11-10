@@ -83,7 +83,13 @@ const decide = async (
 ): Promise<Decision> => {
    const lead = article.summary || page?.description || '';
    const head = `${article.title} ${lead}`;
-   const name = firstMatch(`${head} ${page?.text ?? ''}`, round.names);
+   const named = firstMatch(`${head} ${page?.text ?? ''}`, round.names);
+   /* A Google News search for the fund's name found the name in the article
+      itself, though Google gives only its title (its page does not open
+      here): each result counts as a mention. */
+   const searched =
+      str(source.kind) === 'google' ? firstMatch(str(source.address), round.names) : '';
+   const name = named || searched;
    const keywords = wordsOf(str(source.keywords));
    const keyword = keywords.length ? firstMatch(head, keywords) : '';
    // the fund named: press, up to a year back; else market news of the week
@@ -95,9 +101,11 @@ const decide = async (
         ? null
         : 'market';
    if (!section) return { take: false };
-   const why = name
-      ? `Упоминает «${name}»`
-      : keyword
+   const why = named
+      ? `Упоминает «${named}»`
+      : searched
+        ? `Найдено поиском Google News по «${searched}»`
+        : keyword
         ? `Ключевое слово «${keyword}»`
         : 'Источник без ключевых слов: берутся все статьи';
 
