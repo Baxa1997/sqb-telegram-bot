@@ -2,13 +2,16 @@ import { randomBytes } from 'node:crypto';
 import { accountWired, createGroup, floodWaitOf } from './account.ts';
 import * as bot from './bot.ts';
 import { TIMING } from './config.ts';
-import { createRow, listRows, type Row, str, updateRow } from './ucode.ts';
+import { seedMembers } from './members.ts';
+import { createRow, deleteRow, listRows, type Row, str, updateRow } from './ucode.ts';
 
 /* The deals' groups (tg_chats, batch 26). Every deal made after the bot's
    server first ran gets one: the fund's account creates it, or, without the
    account, a person adds the bot to a group by the link the panel shows.
    The panel asks for one for an older deal, or again after a failure
-   (`status` `requested`). */
+   (`status` `requested`).
+   Any other group the bot is added to opens too, as a chat of no deal
+   (`created_via` `added`, batch 30), until the panel links it to a deal. */
 
 export interface Deal {
    id: string;
@@ -20,6 +23,8 @@ export interface Deal {
 
 export const state = {
    botUsername: '',
+   botId: 0,
+   readsAll: false, // privacy mode is off: the bot sees all messages without being an admin
    since: '', // ISO: deals made after it get a group by themselves
    deals: new Map<string, Deal>(),
    chats: [] as Row[],
@@ -115,6 +120,7 @@ const setUp = async (row: Row, deal: Deal, chatId: string, rename: boolean) => {
          `Группа сделки «${bot.escapeHtml(deal.company)}» открыта. Всё, что пишут здесь, сохраняется в платформе фонда SQB Ventures, в разделе «Чат и письма»; ответы команды из платформы приходят сюда от бота.`,
       ),
    );
+   await quietly('members', () => seedMembers({ ...row, chat_id: chatId }));
    await quietly('history', () =>
       createRow('deal_events', {
          kind: 'text',
@@ -205,15 +211,19 @@ export const renewLinks = async () => {
 };
 
 /* `/start <token>` in a group: a person added the bot by a deal's link. The
-   group becomes that deal's; a wrong or old link makes the bot leave. */
+   group becomes that deal's; a wrong or old link makes the bot leave, unless
+   the group is already open in the panel without a deal. */
 export const bindByToken = async (chatId: string, token: string) => {
+   joined.delete(chatId); // the deal's link wins over a plain join
    await loadChats();
    const row = state.chats.find(
       (item) => str(item.link_token) === token && str(item.status) === 'waiting_bot',
    );
    const deal = row && state.deals.get(str(row.deals_id));
    const bound = chatByTelegramId(chatId);
-   if (bound && bound.guid !== row?.guid) {
+   // a group open in the panel without a deal: it becomes the deal's
+   const free = bound && !str(bound.deals_id) ? bound : undefined;
+   if (bound && !free && bound.guid !== row?.guid) {
       await bot.sendMessage(chatId, 'Эта группа уже связана с другой сделкой фонда.');
       return;
    }
@@ -222,11 +232,18 @@ export const bindByToken = async (chatId: string, token: string) => {
          chatId,
          'Эта ссылка не подходит или устарела. Откройте новую в разделе «Чат и письма» платформы фонда.',
       );
-      await bot.leaveChat(chatId);
+      if (!free) await bot.leaveChat(chatId);
       return;
    }
+   // the group's own row is kept, so its earlier messages stay with it
+   const target = free ?? row;
+   if (free) {
+      await moveToDeal(free, deal);
+      await deleteRow('tg_chats', row.guid);
+   }
    await updateRow('tg_chats', {
-      guid: row.guid,
+      guid: target.guid,
+      ...(free && { deals_id: deal.id }),
       chat_id: chatId,
       status: 'active',
       created_via: 'link',
@@ -236,13 +253,207 @@ export const bindByToken = async (chatId: string, token: string) => {
       error: '',
    });
    log(`${deal.company}: group linked by a person`);
-   await setUp(row, deal, chatId, true);
+   await setUp(target, deal, chatId, true);
    await loadChats();
+};
+
+/* A group's messages, kept while it had no deal, go to the deal's journal
+   with their files. */
+const moveToDeal = async (row: Row, deal: Deal) => {
+   const lines = (await listRows('deal_events', { tg_group_id: row.guid })).filter(
+      (line) => !str(line.deals_id),
+   );
+   if (!lines.length) return;
+   const ids = new Set(lines.map((line) => line.guid));
+   const files = (await listRows('attachments', { section: 'chat' })).filter(
+      (file) => ids.has(str(file.item_id)) && !str(file.deals_id),
+   );
+   for (const line of lines)
+      await updateRow('deal_events', { guid: line.guid, deals_id: deal.id, stage: deal.stage });
+   for (const file of files)
+      await updateRow('attachments', { guid: file.guid, deals_id: deal.id });
+   log(`${deal.company}: ${lines.length} earlier messages of the group moved to the deal`);
+};
+
+// ---- any group the bot is added to
+
+const NOT_ADMIN =
+   'Бот не администратор группы и видит только команды и ответы на свои сообщения. Сделайте его администратором в Telegram.';
+
+/* Groups the bot joined, adopted a few seconds later: a deal's link sends
+   `/start <token>` right after the join, and then the group is that deal's. */
+const joined = new Map<string, { title: string; admin?: boolean; at: number }>();
+const JOIN_WAIT_MS = 10_000;
+
+// `admin` unknown (a service line about the join) keeps what was known.
+export const noticeJoin = (chatId: string, title: string, admin?: boolean) => {
+   const before = joined.get(chatId);
+   joined.set(chatId, {
+      title: title || before?.title || '',
+      admin: admin ?? before?.admin,
+      at: before?.at ?? Date.now(),
+   });
+};
+
+// The row of a Telegram chat in any state, the active one first.
+const rowOfChat = (chatId: string) =>
+   chatByTelegramId(chatId) ?? state.chats.find((row) => str(row.chat_id) === chatId);
+
+const hintOf = (admin: boolean) => (admin || state.readsAll ? '' : NOT_ADMIN);
+
+const greet = async (chatId: string, admin: boolean, back: boolean) => {
+   try {
+      await bot.sendMessage(
+         chatId,
+         [
+            back
+               ? 'Бот фонда SQB Ventures снова в группе: её сообщения опять приходят в платформу фонда.'
+               : 'Бот фонда SQB Ventures подключён. Сообщения этой группы видит команда фонда в своей платформе, в разделе «Чат и письма»; ответы команды приходят сюда от бота.',
+            ...(hintOf(admin)
+               ? ['Сделайте бота администратором группы: без этого он видит только команды и ответы на свои сообщения.']
+               : []),
+         ].join('\n\n'),
+      );
+   } catch (error) {
+      log(`greeting skipped: ${(error as Error).message}`);
+   }
+};
+
+/* The bot is in a group the panel does not show yet: by a plain «add member»,
+   with or without the fund's account. It opens as a chat of no deal; one the
+   bot had before (removed, or a deal still waiting for it) is open again. */
+const adopt = async (chatId: string, title: string, admin?: boolean) => {
+   const known = rowOfChat(chatId);
+   if (known && ['active', 'creating', 'leaving'].includes(str(known.status))) return known;
+   const rights =
+      admin ?? (await bot.isAdmin(chatId, state.botId).catch(() => true));
+   const error = hintOf(rights);
+   if (known) {
+      await updateRow('tg_chats', {
+         guid: known.guid,
+         status: 'active',
+         link_token: '',
+         linked_at: now(),
+         error,
+      });
+      Object.assign(known, { status: 'active', link_token: '', error });
+      log(`${str(known.title)}: the bot is in the group again`);
+      await greet(chatId, rights, true);
+      await seedMembers(known);
+      return known;
+   }
+   const fields = {
+      chat_id: chatId,
+      title: (title || 'Группа в Telegram').slice(0, 128),
+      status: 'active',
+      created_via: 'added',
+      linked_at: now(),
+      requested_by_id: '',
+      error,
+   };
+   const guid = await createRow('tg_chats', fields);
+   const row: Row = { guid, ...fields };
+   state.chats.push(row);
+   log(`${fields.title}: the bot was added to the group, which opens in the panel`);
+   try {
+      const link = await bot.exportInviteLink(chatId);
+      await updateRow('tg_chats', { guid, invite_link: link });
+      row.invite_link = link;
+   } catch (error) {
+      log(`${fields.title}: no invite link: ${(error as Error).message}`);
+   }
+   await greet(chatId, rights, false);
+   await seedMembers(row);
+   return row;
+};
+
+export const adoptGroup = async (chatId: string, title: string, admin?: boolean) => {
+   const row = await adopt(chatId, title, admin);
+   joined.delete(chatId);
+   return row;
+};
+
+// The groups joined a while ago that no deal's link took.
+export const adoptJoined = async () => {
+   for (const [chatId, join] of [...joined])
+      if (Date.now() - join.at >= JOIN_WAIT_MS)
+         await adoptGroup(chatId, join.title, join.admin);
+};
+
+/* The bot's rights changed in a group the panel shows: the hint to make it
+   an admin comes and goes. False when the group is not open in the panel. */
+export const noteRights = async (chatId: string, admin: boolean) => {
+   const row = chatByTelegramId(chatId);
+   if (!row || str(row.status) !== 'active') return false;
+   if (admin) linkTried.delete(row.guid); // it may make the invite link now
+   const error = hintOf(admin);
+   const current = str(row.error);
+   if (current !== error && (!current || current === NOT_ADMIN)) {
+      await updateRow('tg_chats', { guid: row.guid, error });
+      row.error = error;
+   }
+   return true;
+};
+
+/* An open group without its invite link: the panel emptied it for a new one
+   (which cancels the old), or the bot could not make one. A refusal is not
+   tried again until the bot's rights change; a group opened in the last
+   minute is left to its own setting up. */
+const linkTried = new Set<string>();
+export const renewInvites = async () => {
+   for (const row of state.chats) {
+      if (str(row.status) !== 'active' || str(row.invite_link) || linkTried.has(row.guid)) continue;
+      if (Date.now() - Date.parse(str(row.linked_at)) < 60_000) continue;
+      try {
+         const link = await bot.exportInviteLink(str(row.chat_id));
+         await updateRow('tg_chats', { guid: row.guid, invite_link: link });
+         row.invite_link = link;
+         log(`${str(row.title)}: a new invite link`);
+      } catch (error) {
+         // no right to invite: wait for a change of rights; else the next round
+         if (error instanceof bot.TelegramError && [400, 403].includes(error.code))
+            linkTried.add(row.guid);
+         log(`${str(row.title)}: no invite link: ${(error as Error).message}`);
+      }
+   }
+};
+
+// A group of no deal renamed in Telegram keeps its name in the panel.
+export const renameFree = async (chatId: string, title: string) => {
+   const row = chatByTelegramId(chatId);
+   if (!row || str(row.deals_id) || !title) return;
+   await updateRow('tg_chats', { guid: row.guid, title: title.slice(0, 128) });
+   row.title = title;
+};
+
+/* The panel asked the bot to leave a group of no deal (`status` `leaving`):
+   it says goodbye, leaves, and the row is `removed`. Added again later, the
+   group opens again with its messages. */
+export const processLeaving = async () => {
+   for (const row of state.chats.filter((item) => str(item.status) === 'leaving')) {
+      const chatId = str(row.chat_id);
+      try {
+         await bot.sendMessage(chatId, 'Бот фонда SQB Ventures отключён от этой группы.');
+      } catch {
+         // already out of it
+      }
+      try {
+         await bot.leaveChat(chatId);
+      } catch (error) {
+         // Telegram's «not in the chat» or a bad request: it is out anyway
+         if (!(error instanceof bot.TelegramError) || ![400, 403].includes(error.code))
+            throw error;
+      }
+      await updateRow('tg_chats', { guid: row.guid, status: 'removed' });
+      row.status = 'removed';
+      log(`${str(row.title)}: the bot left the group, as the panel asked`);
+   }
 };
 
 // The bot was removed from a group, or is not in it at all: the panel then
 // offers «Подключить заново».
 export const markLost = async (chatId: string, error = '') => {
+   joined.delete(chatId); // added and taken out again within seconds
    const row = chatByTelegramId(chatId);
    if (!row || str(row.status) !== 'active') return;
    await updateRow('tg_chats', { guid: row.guid, status: 'lost', ...(error && { error }) });
@@ -258,6 +469,7 @@ export const checkGroups = async () => {
    for (const row of state.chats.filter((item) => str(item.status) === 'active'))
       try {
          await bot.getChat(str(row.chat_id));
+         await seedMembers(row);
       } catch (error) {
          if (bot.notInChat(error))
             await markLost(str(row.chat_id), 'Бота нет в этой группе: возможно, сменили бота');

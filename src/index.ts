@@ -2,6 +2,8 @@ import { accountWired, loadAccount, processAuth } from './account.ts';
 import * as bot from './bot.ts';
 import { APP_READY, NEWS, TELEGRAM, TIMING, UCODE } from './config.ts';
 import {
+   adoptGroup,
+   adoptJoined,
    bindByToken,
    chatByTelegramId,
    checkGroups,
@@ -9,13 +11,19 @@ import {
    loadDeals,
    markLost,
    migrate,
+   noteRights,
+   noticeJoin,
    openForNewDeals,
+   processLeaving,
    processRequested,
+   renameFree,
+   renewInvites,
    renewLinks,
    state,
    syncTitles,
 } from './groups.ts';
-import { receive, sendPending } from './messages.ts';
+import { countMembers, members, noteMember, processRemovals } from './members.ts';
+import { hasContent, receive, sendPending } from './messages.ts';
 import { aiModel } from './news/ai.ts';
 import { collectNews } from './news/index.ts';
 import { ensureKeys } from './secrets.ts';
@@ -24,6 +32,7 @@ import { listRows, str, UcodeError, updateRow } from './ucode.ts';
 /* The fund's Telegram bot server (dashboard repo, docs/telegram.md): every
    new deal gets its group, every message of a group comes into the deal's
    journal, and what the team writes in «Чат и письма» goes to the group.
+   Any other group the bot is added to opens in «Чат и письма» too.
    It also collects the news for the website (src/news, docs/news.md).
    It reads Telegram by long polling and the panel's requests from ucode, so it
    needs no public address. Run exactly one copy per bot: Telegram gives a
@@ -68,17 +77,60 @@ const handle = async (update: bot.TgUpdate) => {
          await migrate(chatId, String(message.migrate_to_chat_id));
          return;
       }
+      const known = chatByTelegramId(chatId);
+      const open = str(known?.status) === 'active';
+      const title = message.chat.title ?? '';
       const start = message.text?.match(START);
       if (start && (!start[1] || start[1].toLowerCase() === state.botUsername.toLowerCase())) {
-         if (start[2] && !chatByTelegramId(chatId)) await bindByToken(chatId, start[2]);
+         // a deal's link; a plain /start opens the group as one of no deal
+         if (start[2] && !str(known?.deals_id)) await bindByToken(chatId, start[2]);
+         else if (!open) await adoptGroup(chatId, title);
          return;
       }
+      if (message.new_chat_title) await renameFree(chatId, message.new_chat_title);
+      // who came and who left, as the group shows it
+      if (open && known && (message.new_chat_members?.length || message.left_chat_member)) {
+         for (const user of message.new_chat_members ?? []) await noteMember(known, user, 'member');
+         if (message.left_chat_member) await noteMember(known, message.left_chat_member, 'left');
+         await countMembers(known);
+      }
+      if (message.new_chat_members?.some(({ id }) => id === state.botId)) {
+         if (!open) noticeJoin(chatId, title);
+         return;
+      }
+      // the bot sees a group the panel does not show: it opens there now
+      if (!open && hasContent(message)) {
+         if (str(known?.status) === 'leaving' || str(known?.status) === 'removed') return;
+         await adoptGroup(chatId, title);
+      }
       await receive(message, Boolean(update.edited_message));
+      // whoever writes is in the group
+      const group = chatByTelegramId(chatId);
+      if (group && str(group.status) === 'active' && message.from && !message.from.is_bot && !message.sender_chat)
+         await noteMember(group, message.from);
+      return;
+   }
+   // someone else joined, left, or changed rights (the bot is an admin)
+   const change = update.chat_member;
+   if (change) {
+      const group = chatByTelegramId(String(change.chat.id));
+      if (group && str(group.status) === 'active') {
+         await noteMember(group, change.new_chat_member.user, change.new_chat_member.status);
+         await countMembers(group);
+      }
       return;
    }
    const member = update.my_chat_member;
-   if (member && ['left', 'kicked'].includes(member.new_chat_member.status))
-      await markLost(String(member.chat.id));
+   if (!member || !['group', 'supergroup'].includes(member.chat.type)) return;
+   const chatId = String(member.chat.id);
+   const status = member.new_chat_member.status;
+   if (['left', 'kicked'].includes(status)) {
+      await markLost(chatId);
+      return;
+   }
+   // added, or its rights changed: a group not shown yet opens in a moment
+   const admin = status === 'administrator' || status === 'creator';
+   if (!(await noteRights(chatId, admin))) noticeJoin(chatId, member.chat.title ?? '', admin);
 };
 
 // Telegram's updates, one at a time; a failure that may pass keeps its place.
@@ -142,6 +194,9 @@ const main = async () => {
    }
    const me = await bot.getMe();
    state.botUsername = me.username ?? '';
+   state.botId = me.id;
+   members.botId = me.id;
+   state.readsAll = me.can_read_all_group_messages === true;
    const [settings] = await listRows('fund_settings');
    if (settings) {
       await ensureKeys(settings, APP_READY);
@@ -162,6 +217,8 @@ const main = async () => {
          await loadDeals();
          await openForNewDeals();
          await syncTitles();
+         // the people the panel asked to remove from a group
+         await processRemovals(state.chats);
       },
       'deals',
    );
@@ -178,6 +235,9 @@ const main = async () => {
          }
          await loadChats();
          await processRequested();
+         await adoptJoined();
+         await processLeaving();
+         await renewInvites();
          await renewLinks();
          await sendPending();
       },

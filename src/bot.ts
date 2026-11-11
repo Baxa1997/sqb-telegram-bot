@@ -58,6 +58,7 @@ export interface TgUser {
    first_name: string;
    last_name?: string;
    username?: string;
+   can_read_all_group_messages?: boolean; // getMe: privacy mode is off
 }
 
 export interface TgChat {
@@ -100,6 +101,7 @@ export interface TgMessage {
 
 export interface TgChatMemberUpdated {
    chat: TgChat;
+   // creator, administrator, member, restricted, left or kicked
    new_chat_member: { status: string; user: TgUser };
 }
 
@@ -107,7 +109,8 @@ export interface TgUpdate {
    update_id: number;
    message?: TgMessage;
    edited_message?: TgMessage;
-   my_chat_member?: TgChatMemberUpdated;
+   my_chat_member?: TgChatMemberUpdated; // the bot itself
+   chat_member?: TgChatMemberUpdated; // anyone else, while the bot is an admin
 }
 
 // ---- the methods
@@ -120,7 +123,7 @@ export const getUpdates = (offset: number) =>
       {
          offset,
          timeout: 25,
-         allowed_updates: ['message', 'edited_message', 'my_chat_member'],
+         allowed_updates: ['message', 'edited_message', 'my_chat_member', 'chat_member'],
       },
       40000,
    );
@@ -169,6 +172,33 @@ export const leaveChat = (chatId: string) =>
    call<boolean>('leaveChat', { chat_id: chatId });
 
 export const getChat = (chatId: string) => call<{ id: number }>('getChat', { chat_id: chatId });
+
+// The group's admins, its owner among them: the only members a bot can list.
+export const getAdmins = (chatId: string) =>
+   call<{ status: string; user: TgUser }[]>('getChatAdministrators', { chat_id: chatId });
+
+export const memberCount = (chatId: string) =>
+   call<number>('getChatMemberCount', { chat_id: chatId });
+
+/* Takes a person out of the group and lets them come back by a link: banned,
+   then unbanned at once (a basic group has no ban list to lift). */
+export const removeMember = async (chatId: string, userId: string) => {
+   await call<boolean>('banChatMember', { chat_id: chatId, user_id: Number(userId) });
+   await call<boolean>('unbanChatMember', {
+      chat_id: chatId,
+      user_id: Number(userId),
+      only_if_banned: true,
+   }).catch(() => undefined);
+};
+
+// Whether this bot is an admin of the group, and so sees all its messages.
+export const isAdmin = async (chatId: string, botId: number) => {
+   const member = await call<{ status: string }>('getChatMember', {
+      chat_id: chatId,
+      user_id: botId,
+   });
+   return member.status === 'administrator' || member.status === 'creator';
+};
 
 /* Telegram's answer that this bot is not in the group: it was removed, or the
    group was opened with another bot (a new TELEGRAM_BOT_TOKEN). A group that

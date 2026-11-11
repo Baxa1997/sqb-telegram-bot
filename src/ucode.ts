@@ -143,6 +143,11 @@ export const updateRow = (table: string, data: Row) =>
       disable_faas: true,
    });
 
+export const deleteRow = (table: string, guid: string) =>
+   call('DELETE', `/v2/items/${table}/${encodeURIComponent(guid)}`, { 'from-ofs': true }, {
+      data: {},
+   });
+
 // A file into ucode Files; its full address and id.
 export const uploadFile = async (file: File) => {
    const form = new FormData();
