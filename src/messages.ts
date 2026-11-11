@@ -13,7 +13,9 @@ import {
 
 /* A deal group's messages, both ways. Each is a line of the deal's journal
    (deal_events, kind `message`), the same as one written in the panel, so
-   «Чат и письма» shows them together:
+   «Чат и письма» shows them together. Every line from or for Telegram keeps
+   its group's tg_chats row in `tg_group_id` (batch 30); a group of no deal
+   has only that, no `deals_id`:
    - from Telegram: `source` telegram, its `author` and `tg_message_id`, its
      file in ucode Files and an `attachments` row (section chat);
    - from the panel: a line with `tg_state` pending is sent by the bot, signed
@@ -59,7 +61,13 @@ const otherText = (message: bot.TgMessage) =>
             ? `Опрос: ${message.poll.question}`
             : '';
 
-// A message written in a deal's group comes into the deal's journal.
+// Whether a message is one to keep: not a service line (a member joined,
+// the group renamed) nor a kind not kept.
+export const hasContent = (message: bot.TgMessage) =>
+   Boolean(message.text ?? message.caption ?? fileOf(message) ?? otherText(message));
+
+// A message written in a group comes into its deal's journal, or its own
+// chat for a group of no deal.
 export const receive = async (message: bot.TgMessage, edited: boolean) => {
    const chatId = String(message.chat.id);
    const row = chatByTelegramId(chatId);
@@ -70,8 +78,7 @@ export const receive = async (message: bot.TgMessage, edited: boolean) => {
    const guid = guidOf(telegramId);
    let text = message.text ?? message.caption ?? '';
    const file = fileOf(message);
-   // a service line (the group made, a member joined) or a kind not kept
-   if (!text && !file && !otherText(message)) return;
+   if (!hasContent(message)) return;
 
    if (edited) {
       if (await getRow('deal_events', guid)) await updateRow('deal_events', { guid, text });
@@ -96,7 +103,7 @@ export const receive = async (message: bot.TgMessage, edited: boolean) => {
             file_id: stored.id,
             section: 'chat',
             item_id: guid,
-            deals_id: dealId,
+            ...(dealId && { deals_id: dealId }),
             added_by_id: '',
             added_at: iso(message.date),
          });
@@ -110,11 +117,12 @@ export const receive = async (message: bot.TgMessage, edited: boolean) => {
       text,
       at: iso(message.date),
       stage: state.deals.get(dealId)?.stage ?? '',
-      deals_id: dealId,
+      ...(dealId && { deals_id: dealId }),
       employee_id: '',
       source: 'telegram',
       author: authorOf(message),
       tg_message_id: telegramId,
+      tg_group_id: row.guid,
    });
    log(`${str(row.title)}: a message from ${authorOf(message)} is in the platform`);
 };
@@ -139,13 +147,17 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // how long a reply that Telegram could not take is tried again
 const RETRY_MS = 30 * 60000;
 
-// The panel's messages waiting to go to their deal's group.
+// The panel's messages waiting to go to their deal's group, or to a group
+// of no deal by its row.
 export const sendPending = async () => {
    const pending = await listRows('deal_events', { tg_state: 'pending' });
    for (const line of pending) {
       const dealId = str(line.deals_id);
+      const groupId = str(line.tg_group_id);
       const group = state.chats.find(
-         (row) => str(row.deals_id) === dealId && str(row.status) === 'active',
+         (row) =>
+            str(row.status) === 'active' &&
+            (dealId ? str(row.deals_id) === dealId : !!groupId && row.guid === groupId),
       );
       if (!group) {
          await updateRow('deal_events', { guid: line.guid, tg_state: 'failed' });
